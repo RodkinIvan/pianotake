@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pianotake"
-version = "0.1.0"
+dynamic = ["version"]
 description = "One-button recorder for digital pianos and MIDI keyboards: every take saves a WAV and a sample-aligned MIDI file."
 readme = "README.md"
 license = "MIT"
@@ -44,6 +44,9 @@ pianotake-check = "pianotake.check:main"
 
 [tool.setuptools]
 packages = ["pianotake"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pianotake.__version__" }
 
 [tool.setuptools.package-data]
 pianotake = ["icon.png"]
