@@ -9,8 +9,8 @@ packaging/macos/build.sh             # PYTHON=/path/to/python to pick another on
 ```
 
 Without a certificate the app is **ad-hoc signed**. It runs on your own Mac. On other
-Macs, Gatekeeper says it is from an unidentified developer: users can right-click → Open,
-or allow it under System Settings → Privacy & Security.
+Macs, Gatekeeper refuses it on first launch. Users then click **Open Anyway** under System
+Settings → Privacy & Security, or run `xattr -dr com.apple.quarantine pianotake.app`.
 
 The app declares `NSMicrophoneUsageDescription`, so on first use macOS asks whether
 *pianotake* may use audio input. The user doesn't have to grant permission to a terminal.

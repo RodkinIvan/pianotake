@@ -11,7 +11,8 @@ from pathlib import Path
 from tkinter import ttk, filedialog
 
 from .recorder import (CHANNELS, NO_MIDI, NO_SIGNAL_SECONDS, Take, db, diagnose, fmt_db,
-                       list_audio_inputs, list_midi_inputs, midi_output_for, pick_devices,
+                       list_audio_inputs, list_midi_inputs, mic_authorization, midi_output_for,
+                       pick_devices,
                        probe_input, refresh_portaudio, resolve_audio_index, reveal, silence_help,
                        unique_base, with_retries)
 from .settings import DEFAULT_OUT, load_settings, save_settings
@@ -45,6 +46,7 @@ class App:
         self.scan_after = None
         self.probed_for = None
         self.probing = False
+        self.waiting_permission = False
         self.quit_after_stop = False
         self.last_result = None
         self.meter_db = self.hold_db = -120.0
@@ -250,6 +252,8 @@ class App:
             self._on_devices(*m[1:])
         elif kind == "probe":
             self._on_probe(*m[1:])
+        elif kind == "permission":
+            self._on_permission(*m[1:])
         elif kind == "started":
             self._set_state("recording")
             t = self.take
@@ -413,7 +417,7 @@ class App:
         self.status.configure(text="    ".join(parts))
 
     # ---------------------------------------------------------------- pre-flight
-    def _probe(self, play):
+    def _probe(self, play, retry=0):
         a = self._selected_audio()
         if not a or self.state != "idle" or self.probing:
             return
@@ -433,26 +437,38 @@ class App:
                 except Exception:  # noqa: BLE001
                     midi_out = None
             if not self.pa_lock.acquire(timeout=3):
-                self.post(("probe", a, None, "audio device busy"))
+                self.post(("probe", a, None, "audio device busy", play, retry))
                 return
             try:
                 res = with_retries(lambda: probe_input(
                     resolve_audio_index(a["name"], a["channels"]), a["channels"], a["samplerate"],
                     1.5 if play else 1.0, midi_out), "Opening audio for test", attempts=3,
                     log=lambda s: self.post(("log", "warn", s)))
-                self.post(("probe", a, res, None))
+                self.post(("probe", a, res, None, play, retry))
             except Exception as e:  # noqa: BLE001
-                self.post(("probe", a, None, str(e)))
+                self.post(("probe", a, None, str(e), play, retry))
             finally:
                 self.pa_lock.release()
         threading.Thread(target=work, daemon=True).start()
 
-    def _on_probe(self, dev, res, err):
+    def _on_probe(self, dev, res, err, play=False, retry=0):
         self.probing = False
         self._set_state(self.state)
         if err:
             self.say(f"Audio test failed: {err}", "err")
             self.warn.configure(text="Audio test failed: could not open the input. See messages.")
+            return
+        if res["all_zero"] and res.get("mic") == "not_determined":
+            # Opening the input just made macOS ask; until the user answers it delivers silence.
+            self.say("macOS is asking whether pianotake may use audio input. Click Allow; "
+                     "the test runs again by itself.", "warn")
+            self.warn.configure(text="Click Allow in the macOS dialog to let pianotake hear your instrument.")
+            self._wait_for_permission(dev)
+            return
+        if res["all_zero"] and not play and retry == 0:
+            # An instrument that was just switched on can send pure zeros for a moment.
+            self.say("No signal yet; testing again in 2 s…")
+            self.root.after(2000, lambda: self._probe(False, retry=1))
             return
         level, text = diagnose(res, dev["name"])
         self.say(text, level)
@@ -464,6 +480,33 @@ class App:
             self.warn.configure(text="⚠ Pre-flight: test chord not heard. See messages below.")
         elif self.warn.cget("text").startswith("⚠ Pre-flight"):
             self.warn.configure(text="")
+
+    def _wait_for_permission(self, dev):
+        """Poll the microphone permission off the Tk thread until the user answers."""
+        if self.waiting_permission:
+            return
+        self.waiting_permission = True
+
+        def work():
+            for _ in range(600):                      # up to 5 minutes
+                status = mic_authorization()
+                if status != "not_determined":
+                    self.post(("permission", dev, status))
+                    return
+                time.sleep(0.5)
+            self.post(("permission", dev, None))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_permission(self, dev, status):
+        self.waiting_permission = False
+        if status == "authorized":
+            self.say("Audio input allowed. Testing again…", "ok")
+            self.warn.configure(text="")
+            self.probed_for = None
+            self._probe(False)
+        elif status in ("denied", "restricted"):
+            self.say(silence_help("the input", mic=status), "err")
+            self.warn.configure(text="⚠ Audio input was not allowed. See messages below to turn it on.")
 
     # ---------------------------------------------------------------- record
     def _can_toggle(self):

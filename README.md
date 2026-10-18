@@ -31,10 +31,18 @@ No DAW, no routing, no setup.
 
 ## Install
 
-**Mac app:** download the DMG from [Releases](https://github.com/RodkinIvan/pianotake/releases),
-open it, and drag pianotake to Applications. No Python needed. On first use, macOS asks
-whether pianotake may use audio input; click Allow. To build the app yourself, see
-[packaging/macos](packaging/macos/README.md).
+**Mac app** (Apple Silicon): download the DMG from
+[Releases](https://github.com/RodkinIvan/pianotake/releases), open it, and drag pianotake to
+Applications. No Python needed.
+
+The app isn't notarized by Apple yet, so the first launch takes one extra step. Open it
+once; macOS says it can't verify pianotake. Then go to **System Settings → Privacy &
+Security**, scroll down, and click **Open Anyway** next to pianotake. After that it opens
+normally. Prefer the terminal? `xattr -dr com.apple.quarantine /Applications/pianotake.app`
+does the same.
+
+When pianotake first opens your instrument, macOS asks whether it may use audio input:
+click **Allow**. To build the app yourself, see [packaging/macos](packaging/macos/README.md).
 
 **With Python** (any OS), Python 3.9 or newer:
 

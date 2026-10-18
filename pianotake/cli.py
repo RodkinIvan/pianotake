@@ -3,6 +3,7 @@ import argparse
 import datetime
 import sys
 import threading
+import time
 from pathlib import Path
 
 from . import __version__
@@ -67,7 +68,22 @@ def run_cli(args):
     dev = next(d for d in audio if d["name"] == a)
     print(f"Audio: {a} ({dev['channels']} ch, {dev['samplerate']} Hz)")
     print(f"MIDI:  {m or 'none (audio only)'}")
-    level, text = r.diagnose(r.probe_input(dev["index"], dev["channels"], dev["samplerate"], 1.0), a)
+    def probe():
+        return r.probe_input(dev["index"], dev["channels"], dev["samplerate"], 1.0)
+    res = probe()
+    if res["all_zero"] and res.get("mic") == "not_determined":
+        # Opening the input just made macOS ask; until the user answers it delivers silence.
+        print("macOS is asking whether this app may use audio input. Click Allow...")
+        for _ in range(600):
+            if r.mic_authorization() != "not_determined":
+                break
+            time.sleep(0.5)
+        res = probe()
+    elif res["all_zero"]:
+        print("No signal yet; testing again in 2 s...")  # a just-switched-on instrument
+        time.sleep(2)
+        res = probe()
+    level, text = r.diagnose(res, a)
     print(text)
     if level == "err":
         if not sys.stdin.isatty() or input("Record anyway? [y/N] ").strip().lower() != "y":
