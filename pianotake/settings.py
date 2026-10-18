@@ -33,6 +33,12 @@ def save_settings(data):
         pass
 
 
+def tilde(path):
+    """Show a path under the home folder as ~/... (shorter, and keeps user names off screen)."""
+    p, home = str(path), str(Path.home())
+    return "~" + p[len(home):] if p == home or p.startswith(home + os.sep) else p
+
+
 def output_folder():
     """The folder takes are saved to: the remembered one, else the default."""
     return Path(load_settings().get("folder") or DEFAULT_OUT).expanduser()

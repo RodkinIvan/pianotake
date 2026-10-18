@@ -44,3 +44,6 @@ pianotake-check = "pianotake.check:main"
 
 [tool.setuptools]
 packages = ["pianotake"]
+
+[tool.setuptools.package-data]
+pianotake = ["icon.png"]

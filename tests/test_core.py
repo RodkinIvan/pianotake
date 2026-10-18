@@ -215,3 +215,36 @@ def test_gui_module_imports():
     pytest.importorskip("tkinter")
     from pianotake import gui
     assert hasattr(gui, "App")
+
+
+# --------------------------------------------------------------------------- MIDI only
+
+def test_midi_only_take_writes_only_a_mid(tmp_path):
+    take = r.Take(None, 0, 0, "Piano", tmp_path / "m")
+    assert take.wav_path is None
+    take.first_adc = r.time.perf_counter()      # what start() does for a MIDI-only take
+    take.accept_midi = True
+    take._midi_cb(mido.Message("note_on", note=60, velocity=90))
+    r.time.sleep(0.3)
+    take._midi_cb(mido.Message("note_off", note=60))
+    r.time.sleep(0.2)
+    take.stop()
+    res = take.wait(10)
+    assert res.wav_path is None and not list(tmp_path.glob("*.wav"))
+    assert res.note_ons == 1 and res.duration == pytest.approx(0.5, abs=0.1)
+    info = check.midi_info(take.mid_path)
+    assert info["note_times"][0] == pytest.approx(0.0, abs=0.02)
+    assert info["duration"] == pytest.approx(res.duration, abs=1e-3)
+
+
+def test_cli_choose_midi_only():
+    args = cli.parse_args(["--audio", "none"])
+    a, m = cli.choose(args, ["Roland Digital Piano"], ["Roland Digital Piano"])
+    assert (a, m) == (r.NO_AUDIO, "Roland Digital Piano")
+
+
+def test_tilde_hides_the_home_folder():
+    from pathlib import Path
+    from pianotake.settings import tilde
+    assert tilde(Path.home() / "Music" / "x.wav") == str(Path("~") / "Music" / "x.wav")
+    assert tilde("/elsewhere/x.wav") == "/elsewhere/x.wav"

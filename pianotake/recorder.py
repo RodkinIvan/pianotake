@@ -28,6 +28,7 @@ TEMPO = 500000            # 120 bpm (1 beat = 0.5 s) -> 1 tick ~ 0.52 ms
 NO_SIGNAL_SECONDS = 5.0   # warn live if the take is still exact digital zero after this
 DROP_TYPES = {"clock", "active_sensing"}
 NO_MIDI = "(none, audio only)"
+NO_AUDIO = "(none, MIDI only)"
 SFC_UPDATE_HEADER_NOW = 0x1060  # libsndfile command; not exported by soundfile
 _STOP = object()
 
@@ -419,7 +420,7 @@ def diagnose(res, name):
 
 @dataclass
 class TakeResult:
-    wav_path: Path
+    wav_path: Path                   # None for a MIDI-only take
     mid_path: Path
     duration: float
     frames: int
@@ -441,9 +442,11 @@ class Take:
     unplugged device. stop() finalizes on its own thread and always saves."""
 
     def __init__(self, audio_name, channels, samplerate, midi_name, base_path, post=None):
+        """audio_name=None records MIDI only (timed on the computer's clock, no WAV)."""
         self.audio_name, self.channels, self.sr = audio_name, channels, samplerate
         self.midi_name = midi_name
-        self.wav_path = Path(f"{base_path}.wav")
+        self.audio = audio_name is not None
+        self.wav_path = Path(f"{base_path}.wav") if self.audio else None
         self.mid_path = Path(f"{base_path}.mid")
         self.post = post or (lambda m: None)
         self.stream = self.port = self.sf = None
@@ -476,20 +479,24 @@ class Take:
     # -- start ---------------------------------------------------------------
     def start(self):
         """Open WAV, MIDI and audio (with retries). On failure nothing is left open."""
-        self.wav_path.parent.mkdir(parents=True, exist_ok=True)
+        self.mid_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self.sf = sf.SoundFile(str(self.wav_path), "w", samplerate=self.sr,
-                                   channels=self.channels, subtype="PCM_24", format="WAV")
-            self._writer_th = threading.Thread(target=self._writer, name="wav-writer", daemon=True)
-            self._writer_th.start()
+            if self.audio:
+                self.sf = sf.SoundFile(str(self.wav_path), "w", samplerate=self.sr,
+                                       channels=self.channels, subtype="PCM_24", format="WAV")
+                self._writer_th = threading.Thread(target=self._writer, name="wav-writer", daemon=True)
+                self._writer_th.start()
             if self.midi_name:
                 ensure_midi_updates()
                 self.port = with_retries(
                     lambda: mido.open_input(self.midi_name, callback=self._midi_cb),
                     f"Opening MIDI '{self.midi_name}'", log=self._log)
             self.started_at = time.monotonic()
-            self.stream = with_retries(self._open_stream, f"Opening audio '{self.audio_name}'",
-                                       log=self._log)
+            if self.audio:
+                self.stream = with_retries(self._open_stream, f"Opening audio '{self.audio_name}'",
+                                           log=self._log)
+            else:
+                self.first_adc = time.perf_counter()   # MIDI only: the take starts now
             self.accept_midi = True
         except Exception:
             self._abort_start()
@@ -519,7 +526,7 @@ class Take:
             self.audio_q.put(_STOP)
             self._writer_th.join(5)
         try:
-            if self.frames_written == 0:
+            if self.wav_path and self.frames_written == 0:
                 self.wav_path.unlink(missing_ok=True)
         except Exception:  # noqa: BLE001
             pass
@@ -547,11 +554,21 @@ class Take:
             self.post(("level", self._lvl_peak))
             self._lvl_peak, self._lvl_frames = 0.0, 0
 
+    def _now(self):
+        """The take's clock: the audio stream's (same as inputBufferAdcTime), or for a
+        MIDI-only take the computer's high-resolution clock."""
+        return self.stream.time if self.stream is not None else time.perf_counter()
+
+    def elapsed(self):
+        if self.audio:
+            return self.frames_captured / self.sr
+        return time.perf_counter() - self.first_adc if self.first_adc is not None else 0.0
+
     def _midi_cb(self, msg):
-        if not self.accept_midi or msg.type in DROP_TYPES or self.stream is None:
+        if not self.accept_midi or msg.type in DROP_TYPES:
             return
         try:
-            t = self.stream.time       # same clock as inputBufferAdcTime
+            t = self._now()
         except Exception:  # noqa: BLE001
             return
         self.midi_events.append((t, msg))
@@ -596,33 +613,47 @@ class Take:
                 pass
 
     def _monitor(self):
-        """Detect an unplugged device: callbacks stop, the stream dies, or MIDI vanishes."""
-        midi_miss, next_midi = 0, time.monotonic() + 2.0
+        """Detect an unplugged device: callbacks stop, the stream dies, or MIDI vanishes.
+        For a MIDI-only take it also saves the MIDI checkpoints (no writer thread runs)."""
+        self._midi_miss, self._next_midi_check = 0, time.monotonic() + 2.0
+        next_checkpoint = time.monotonic() + 2.0
         while not self._stopping:
             time.sleep(0.25)
             if self._stopping:
                 return
             now = time.monotonic()
-            last = self.last_cb
-            if last is None and now - self.started_at > 3.0:
-                return self.stop("no audio buffers arrived from the audio device")
-            if last is not None and now - last > 1.5:
-                return self.stop("audio device stopped delivering audio (unplugged?)")
-            try:
-                active = self.stream.active
-            except Exception:  # noqa: BLE001
-                active = False
-            if not active and not self._stopping:
-                return self.stop("audio stream stopped unexpectedly")
-            if self.midi_name and now >= next_midi:
-                next_midi = now + 2.0
+            if self.audio:
+                last = self.last_cb
+                if last is None and now - self.started_at > 3.0:
+                    return self.stop("no audio buffers arrived from the audio device")
+                if last is not None and now - last > 1.5:
+                    return self.stop("audio device stopped delivering audio (unplugged?)")
                 try:
-                    present = self.midi_name in list_midi_inputs()
+                    active = self.stream.active
                 except Exception:  # noqa: BLE001
-                    present = True
-                midi_miss = 0 if present else midi_miss + 1
-                if midi_miss >= 2:
-                    return self.stop("MIDI port disappeared (unplugged?)")
+                    active = False
+                if not active and not self._stopping:
+                    return self.stop("audio stream stopped unexpectedly")
+            elif now >= next_checkpoint:
+                next_checkpoint = now + 2.0
+                try:
+                    self._write_midi(self.elapsed(), checkpoint=True)
+                except Exception:  # noqa: BLE001 - the final write reports errors
+                    pass
+            if self._midi_gone(now):
+                return self.stop("MIDI port disappeared (unplugged?)")
+
+    def _midi_gone(self, now):
+        """True once the MIDI port has been missing from two checks in a row (every 2 s)."""
+        if not self.midi_name or now < self._next_midi_check:
+            return False
+        self._next_midi_check = now + 2.0
+        try:
+            present = self.midi_name in list_midi_inputs()
+        except Exception:  # noqa: BLE001
+            present = True
+        self._midi_miss = 0 if present else self._midi_miss + 1
+        return self._midi_miss >= 2
 
     # -- stop ------------------------------------------------------------------
     def stop(self, reason=None):
@@ -658,6 +689,23 @@ class Take:
             if not self._run_with_timeout(close_port, 3):
                 self.problems.append("MIDI port did not close cleanly")
 
+        if self.audio:
+            duration = self._close_audio()
+        else:
+            duration = self.elapsed()
+        try:
+            self._write_midi(duration)
+        except Exception as e:  # noqa: BLE001
+            self.problems.append(f"writing MIDI failed: {e}")
+        self.result = TakeResult(self.wav_path, self.mid_path, duration, self.frames_written,
+                                 self.sr, self.note_ons, len(self.midi_events), self.overflows,
+                                 self.other_flags, self.max_peak, self.stop_reason,
+                                 list(self.problems))
+        self.finished.set()
+        self.post(("stopped", self.result))
+
+    def _close_audio(self):
+        """Stop the stream, drain the writer, return the audio duration in seconds."""
         def close_stream():
             try:
                 if self.stop_reason:
@@ -675,18 +723,7 @@ class Take:
         self._audio_closed = True
         self.audio_q.put(_STOP)
         self._writer_th.join(30)
-
-        duration = self.frames_written / self.sr
-        try:
-            self._write_midi(duration)
-        except Exception as e:  # noqa: BLE001
-            self.problems.append(f"writing MIDI failed: {e}")
-        self.result = TakeResult(self.wav_path, self.mid_path, duration, self.frames_written,
-                                 self.sr, self.note_ons, len(self.midi_events), self.overflows,
-                                 self.other_flags, self.max_peak, self.stop_reason,
-                                 list(self.problems))
-        self.finished.set()
-        self.post(("stopped", self.result))
+        return self.frames_written / self.sr
 
     def _write_midi(self, duration, checkpoint=False):
         """Type-0 SMF. Tick 0 = first audio sample; end_of_track = audio duration."""

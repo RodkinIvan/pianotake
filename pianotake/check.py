@@ -17,7 +17,7 @@ import numpy as np
 import soundfile as sf
 import mido
 
-from .settings import output_folder
+from .settings import output_folder, tilde
 
 
 def resolve(arg):
@@ -127,7 +127,7 @@ def report(wav, mid, tol=0.05, dur_tol=0.01):
     def dbfs(v):
         return f"{20 * np.log10(v):.1f} dBFS" if v > 0 else "-inf dBFS (all zero)"
 
-    lines = [f"WAV  {wav}", f"MID  {mid}",
+    lines = [f"WAV  {tilde(wav)}", f"MID  {tilde(mid)}",
              f"audio : {a['wav_dur']:.3f} s, {a['frames']} frames, {a['sr']} Hz, "
              f"{a['channels']} ch, {a['subtype']}, peak {dbfs(a['peak'])}, RMS {dbfs(a['rms'])}",
              f"midi  : {a['duration']:.3f} s, type {a['type']}, {a['tpb']} TPB, {a['notes']} notes, "

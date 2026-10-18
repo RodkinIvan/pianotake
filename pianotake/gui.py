@@ -10,12 +10,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, filedialog
 
-from .recorder import (CHANNELS, NO_MIDI, NO_SIGNAL_SECONDS, Take, db, diagnose, fmt_db,
+from .recorder import (CHANNELS, NO_AUDIO, NO_MIDI, NO_SIGNAL_SECONDS, Take, db, diagnose, fmt_db,
                        list_audio_inputs, list_midi_inputs, mic_authorization, midi_output_for,
                        pick_devices,
                        probe_input, refresh_portaudio, resolve_audio_index, reveal, silence_help,
                        unique_base, with_retries)
-from .settings import DEFAULT_OUT, load_settings, save_settings
+from .settings import DEFAULT_OUT, load_settings, save_settings, tilde
 
 REVEAL_LABEL = ("Reveal in Finder" if sys.platform == "darwin" else
                 "Show in Explorer" if sys.platform.startswith("win") else "Open folder")
@@ -35,6 +35,11 @@ class App:
         self.settings = load_settings()
         self.out_dir = out_dir or self.settings.get("folder") or str(DEFAULT_OUT)
         root.title("pianotake")
+        try:   # window / taskbar icon (the macOS app bundle has its own)
+            self._icon = tk.PhotoImage(file=str(Path(__file__).with_name("icon.png")))
+            root.iconphoto(True, self._icon)
+        except Exception:  # noqa: BLE001 - cosmetic only
+            pass
         root.minsize(560, 0)
         self.q = queue.Queue()
         self.post = self.q.put
@@ -115,7 +120,7 @@ class App:
         out.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         out.columnconfigure(1, weight=1)
         ttk.Label(out, text="Folder").grid(row=0, column=0, sticky="w")
-        self.folder_var = tk.StringVar(value=str(self.out_dir))
+        self.folder_var = tk.StringVar(value=tilde(self.out_dir))
         self.folder_entry = ttk.Entry(out, textvariable=self.folder_var)
         self.folder_entry.grid(row=0, column=1, sticky="ew", padx=6)
         self.folder_btn = ttk.Button(out, text="Choose…", command=self._choose_folder)
@@ -257,7 +262,8 @@ class App:
         elif kind == "started":
             self._set_state("recording")
             t = self.take
-            self.say(f"Recording → {t.wav_path.name} / {t.mid_path.name}", "ok")
+            self.say("Recording → " + " / ".join(p.name for p in (t.wav_path, t.mid_path) if p)
+                     + ("" if t.audio else " (MIDI only)"), "ok")
             if self.quit_after_stop:
                 self._set_state("stopping")
                 t.stop()
@@ -284,10 +290,10 @@ class App:
         no_signal = False
         t = self.take
         if self.state == "recording" and t:
-            secs = t.frames_captured / t.sr
+            secs = t.elapsed()
             mm, ss = divmod(secs, 60)
             self.elapsed.configure(text=f"{int(mm):02d}:{ss:04.1f}")
-            if secs >= NO_SIGNAL_SECONDS and t.max_peak == 0.0:
+            if t.audio and secs >= NO_SIGNAL_SECONDS and t.max_peak == 0.0:
                 no_signal = True
                 if not self.no_signal_logged:
                     self.no_signal_logged = True
@@ -348,28 +354,32 @@ class App:
             self.say(f"Device scan problem: {err}", "warn")
         self.audio_devs, self.midi_names = audio, midi
         labels = [self._audio_label(d) for d in audio]
-        self.audio_cb.configure(values=labels)
+        self.audio_cb.configure(values=labels + [NO_AUDIO])
         self.midi_cb.configure(values=midi + [NO_MIDI])
 
         names = [d["name"] for d in audio]
         cur_a = self._selected_audio()
-        want_a = cur_a["name"] if cur_a and cur_a["name"] in names else None
+        want_a = NO_AUDIO if self._midi_only() else (cur_a["name"] if cur_a and cur_a["name"] in names else None)
         want_m = self.midi_var.get() if self.midi_var.get() in midi + [NO_MIDI] else None
         if want_a is None or want_m is None:
             # explicit --audio/--midi > the choice remembered from last time > automatic pairing
+            hint_a = None if (self.audio_hint or "").lower() == "none" else self.audio_hint
             hint_m = None if (self.midi_hint or "").lower() == "none" else self.midi_hint
-            auto_a, auto_m = pick_devices(names, midi, self.audio_hint, hint_m)
+            auto_a, auto_m = pick_devices(names, midi, hint_a, hint_m)
             saved_a, saved_m = self.settings.get("audio"), self.settings.get("midi")
             if want_a is None:
-                want_a = auto_a if self.audio_hint or saved_a not in names else saved_a
+                want_a = auto_a if self.audio_hint or saved_a not in names + [NO_AUDIO] else saved_a
+                if (self.audio_hint or "").lower() == "none":
+                    want_a = NO_AUDIO
             if want_m is None:
                 want_m = auto_m if self.midi_hint or saved_m not in midi + [NO_MIDI] else saved_m
             if self.midi_hint and self.midi_hint.lower() == "none":
                 want_m = NO_MIDI
-        self.audio_var.set(next((self._audio_label(d) for d in audio if d["name"] == want_a), ""))
+        self.audio_var.set(NO_AUDIO if want_a == NO_AUDIO else
+                           next((self._audio_label(d) for d in audio if d["name"] == want_a), ""))
         self.midi_var.set(want_m or "")
 
-        have_audio = self._selected_audio() is not None
+        have_audio = self._selected_audio() is not None or self._midi_only()
         have_midi = self.midi_var.get() != ""
         self._update_status()
         if not (have_audio and have_midi) and self.scan_attempts < 60:
@@ -397,6 +407,9 @@ class App:
         lbl = self.audio_var.get()
         return next((d for d in self.audio_devs if self._audio_label(d) == lbl), None)
 
+    def _midi_only(self):
+        return self.audio_var.get() == NO_AUDIO
+
     def _selected_midi(self):
         v = self.midi_var.get()
         return None if v in ("", NO_MIDI) else v
@@ -408,11 +421,18 @@ class App:
         a = self._selected_audio()
         if a and self.probed_for != a["name"]:
             self._probe(False)
+        elif self._midi_only():
+            self.probed_for = None
+            if self.warn.cget("text").startswith(("⚠ Pre-flight", "Click Allow")):
+                self.warn.configure(text="")
+            if not self._selected_midi():
+                self.warn.configure(text="Choose a MIDI input to record MIDI only.")
         self._set_state(self.state)
 
     def _update_status(self):
         a = self._selected_audio()
-        parts = [f"Audio: {a['name']} · {a['channels']} ch · {a['samplerate']} Hz" if a else "Audio: (none)",
+        parts = [f"Audio: {a['name']} · {a['channels']} ch · {a['samplerate']} Hz" if a else
+                 "Audio: none (MIDI only)" if self._midi_only() else "Audio: (not chosen)",
                  f"MIDI: {self._selected_midi() or ('none (audio only)' if self.midi_var.get() else '(not chosen)')}"]
         self.status.configure(text="    ".join(parts))
 
@@ -512,7 +532,11 @@ class App:
     def _can_toggle(self):
         if self.state == "recording":
             return True
-        return self.state == "idle" and not self.probing and self._selected_audio() is not None
+        if self.state != "idle" or self.probing:
+            return False
+        if self._midi_only():
+            return self._selected_midi() is not None
+        return self._selected_audio() is not None
 
     def _set_state(self, s):
         self.state = s
@@ -556,7 +580,10 @@ class App:
             return
         base = unique_base(folder, name)
         self._remember()
-        self.take = Take(a["name"], a["channels"], a["samplerate"], self._selected_midi(), base, self.post)
+        if self._midi_only():
+            self.take = Take(None, 0, 0, self._selected_midi(), base, self.post)
+        else:
+            self.take = Take(a["name"], a["channels"], a["samplerate"], self._selected_midi(), base, self.post)
         self.no_signal_logged = False
         self.warn.configure(text="")
         self.notes_lbl.configure(text="MIDI  ·  notes: 0")
@@ -587,16 +614,19 @@ class App:
         self.take = None
         self._set_state("idle")
         mm, ss = divmod(r.duration, 60)
-        stats = (f"{int(mm)}:{ss:04.1f} · {r.note_ons} notes · {r.midi_events} MIDI events · "
-                 f"peak {fmt_db(r.max_peak)} · input overflows: {r.overflows}")
-        self.result_lbl.configure(text=f"Saved:\n{r.wav_path}\n{r.mid_path}\n{stats}")
+        stats = f"{int(mm)}:{ss:04.1f} · {r.note_ons} notes · {r.midi_events} MIDI events"
+        if r.wav_path:
+            stats += f" · peak {fmt_db(r.max_peak)} · input overflows: {r.overflows}"
+        files = [p for p in (r.wav_path, r.mid_path) if p]
+        self.result_lbl.configure(text="Saved:\n" + "\n".join(tilde(p) for p in files) + f"\n{stats}")
         self.reveal_btn.grid(row=0, column=1, padx=(8, 0), sticky="e")
-        self.check_btn.grid(row=1, column=1, padx=(8, 0), sticky="e")
-        self.say(f"Saved {r.wav_path.name} and {r.mid_path.name}: {stats}", "ok")
+        if r.wav_path:   # the sync check compares the WAV with the MIDI
+            self.check_btn.grid(row=1, column=1, padx=(8, 0), sticky="e")
+        self.say(f"Saved {' and '.join(p.name for p in files)}: {stats}", "ok")
         if r.stop_reason:
             self.warn.configure(text=f"Take stopped early: {r.stop_reason}. "
                                      "Everything captured so far was saved.")
-        elif r.max_peak == 0.0 and r.frames:
+        elif r.wav_path and r.max_peak == 0.0 and r.frames:
             self.warn.configure(text="⚠ The saved WAV is digital silence. See messages for fixes.")
         elif r.overflows:
             self.warn.configure(text=f"⚠ {r.overflows} input overflow(s): some audio blocks were "
@@ -610,7 +640,7 @@ class App:
             self.root.destroy()
 
     def _remember(self):
-        self.settings.update(audio=(self._selected_audio() or {}).get("name"),
+        self.settings.update(audio=NO_AUDIO if self._midi_only() else (self._selected_audio() or {}).get("name"),
                              midi=self.midi_var.get() or None,
                              folder=self.folder_var.get().strip() or None)
         save_settings(self.settings)
@@ -618,7 +648,7 @@ class App:
     def _reveal(self):
         r = self.last_result
         if r:
-            reveal(r.wav_path)
+            reveal(r.wav_path or r.mid_path)
 
     def _check(self):
         r = self.last_result
@@ -635,10 +665,10 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     def _choose_folder(self):
-        d = filedialog.askdirectory(initialdir=self.folder_var.get() or str(Path.home()),
+        d = filedialog.askdirectory(initialdir=os.path.expanduser(self.folder_var.get() or "~"),
                                     title="Choose output folder")
         if d:
-            self.folder_var.set(d)
+            self.folder_var.set(tilde(d))
             self._remember()
 
     def _on_close(self):
