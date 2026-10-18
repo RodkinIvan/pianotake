@@ -248,3 +248,11 @@ def test_tilde_hides_the_home_folder():
     from pianotake.settings import tilde
     assert tilde(Path.home() / "Music" / "x.wav") == str(Path("~") / "Music" / "x.wav")
     assert tilde("/elsewhere/x.wav") == "/elsewhere/x.wav"
+
+
+def test_cli_survives_a_system_without_midi(monkeypatch, capsys):
+    def broken():
+        raise RuntimeError("MidiInAlsa::initialize: error creating ALSA sequencer client object.")
+    monkeypatch.setattr(r, "list_midi_inputs", broken)
+    assert cli.midi_inputs(r) == []
+    assert "MIDI is unavailable" in capsys.readouterr().err

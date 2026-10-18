@@ -28,6 +28,16 @@ def parse_args(argv=None):
     return ap.parse_args(argv)
 
 
+def midi_inputs(r):
+    """MIDI input names, or [] with a note when the system has no MIDI service (e.g. Linux
+    without the ALSA sequencer, /dev/snd/seq)."""
+    try:
+        return r.list_midi_inputs()
+    except Exception as e:  # noqa: BLE001
+        print(f"note: MIDI is unavailable on this system ({e})", file=sys.stderr)
+        return []
+
+
 def self_test():
     """Check that a packaged build can load everything it needs (used by the release CI)."""
     import importlib
@@ -35,7 +45,7 @@ def self_test():
         importlib.import_module(module)
     from . import recorder
     recorder.list_audio_inputs()
-    recorder.list_midi_inputs()
+    midi_inputs(recorder)                 # a machine without MIDI hardware is fine
     print(f"pianotake {__version__} self-test ok")
     return 0
 
@@ -43,7 +53,7 @@ def self_test():
 def list_devices(args):
     from . import recorder as r
     audio = r.list_audio_inputs(args.channels)
-    midi = r.list_midi_inputs()
+    midi = midi_inputs(r)
     print("Audio inputs:")
     for d in audio:
         tag = "  (virtual)" if r.is_virtual_audio(d["name"]) else ""
@@ -103,7 +113,7 @@ def preflight(r, dev, name):
 def run_cli(args):
     from . import recorder as r
     audio = r.list_audio_inputs(args.channels)
-    a, m = choose(args, [d["name"] for d in audio], r.list_midi_inputs())
+    a, m = choose(args, [d["name"] for d in audio], midi_inputs(r))
     midi_only = a == r.NO_AUDIO
     if a is None:
         print("No audio input chosen. Pick one with --audio NAME, or --audio none for MIDI only "

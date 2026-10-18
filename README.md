@@ -174,6 +174,9 @@ python -c "import sounddevice as sd, soundfile as sf; x, sr = sf.read('take.wav'
 If it sounds right there, the difference comes from your computer's playback chain
 (Bluetooth headphones, the player app, system effects), not the recording.
 
+**Linux: no MIDI ports at all.** Load the ALSA MIDI sequencer with `sudo modprobe snd-seq`
+(most desktop distributions load it automatically).
+
 **Something else.** Open an issue and include the output of `pianotake --list`.
 
 ## Tested with

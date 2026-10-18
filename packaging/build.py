@@ -34,6 +34,7 @@ Run ./pianotake inside this folder. It needs PortAudio from your distribution:
   Debian/Ubuntu: sudo apt install libportaudio2
   Fedora:        sudo dnf install portaudio
   Arch:          sudo pacman -S portaudio
+No MIDI ports at all? Load the ALSA MIDI sequencer: sudo modprobe snd-seq
 
 https://github.com/RodkinIvan/pianotake
 """,
