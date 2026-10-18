@@ -89,7 +89,48 @@ def list_audio_inputs(max_channels=CHANNELS):
     return devs
 
 
+_midi_ready = threading.Event()
+_midi_lock = threading.Lock()
+_midi_client = []          # the process's first CoreMIDI client, kept alive on its thread
+
+
+def ensure_midi_updates():
+    """Make MIDI ports that appear or vanish later show up in this process (macOS).
+
+    CoreMIDI only updates a process's port list on the run loop of the thread that
+    created the process's first MIDI client. A worker thread without a run loop leaves
+    the list frozen: a piano switched on after start never appears, and one switched off
+    never disappears. So the first client is created on a dedicated thread that keeps
+    running a CFRunLoop. Safe to call often; does nothing on other platforms."""
+    if sys.platform != "darwin" or _midi_ready.is_set():
+        return
+    with _midi_lock:
+        if _midi_ready.is_set():
+            return
+
+        def run():
+            try:
+                import ctypes
+                import ctypes.util
+                import rtmidi
+                cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+                cf.CFRunLoopRunInMode.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_bool]
+                mode = ctypes.c_void_p.in_dll(cf, "kCFRunLoopDefaultMode")
+                _midi_client.append(rtmidi.MidiIn())
+            except Exception:  # noqa: BLE001 - fall back to the frozen list
+                _midi_ready.set()
+                return
+            _midi_ready.set()
+            while True:                        # ctypes releases the GIL while this waits
+                if cf.CFRunLoopRunInMode(mode, 1.0, False) == 1:   # no sources yet
+                    time.sleep(1.0)
+
+        threading.Thread(target=run, name="coremidi-runloop", daemon=True).start()
+        _midi_ready.wait(5)
+
+
 def list_midi_inputs():
+    ensure_midi_updates()
     return list(mido.get_input_names())
 
 
@@ -161,6 +202,7 @@ def midi_output_for(midi_in_name):
     """The instrument's MIDI output (for the test chord): same name, or most shared words."""
     if not midi_in_name:
         return None
+    ensure_midi_updates()
     outs = mido.get_output_names()
     if midi_in_name in outs:
         return midi_in_name
@@ -221,6 +263,7 @@ def probe_input(dev_index, channels, samplerate, seconds=1.0, midi_out_name=None
     out = None
     if midi_out_name:
         try:
+            ensure_midi_updates()
             out = mido.open_output(midi_out_name)
         except Exception:  # noqa: BLE001
             out = None
@@ -440,6 +483,7 @@ class Take:
             self._writer_th = threading.Thread(target=self._writer, name="wav-writer", daemon=True)
             self._writer_th.start()
             if self.midi_name:
+                ensure_midi_updates()
                 self.port = with_retries(
                     lambda: mido.open_input(self.midi_name, callback=self._midi_cb),
                     f"Opening MIDI '{self.midi_name}'", log=self._log)
@@ -573,7 +617,7 @@ class Take:
             if self.midi_name and now >= next_midi:
                 next_midi = now + 2.0
                 try:
-                    present = self.midi_name in mido.get_input_names()
+                    present = self.midi_name in list_midi_inputs()
                 except Exception:  # noqa: BLE001
                     present = True
                 midi_miss = 0 if present else midi_miss + 1
