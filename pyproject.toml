@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pianotake"
+version = "0.1.0"
+description = "One-button recorder for digital pianos and MIDI keyboards: every take saves a WAV and a sample-aligned MIDI file."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ivan Rodkin" }]
+requires-python = ">=3.9"
+dependencies = [
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12",
+    "numpy>=1.24",
+    "mido>=1.3",
+    "python-rtmidi>=1.5",
+]
+keywords = ["piano", "digital piano", "midi", "recorder", "audio", "wav", "usb", "visualizer"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: MacOS X",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+pianotake = "pianotake.cli:main"
+pianotake-check = "pianotake.check:main"
+
+[tool.setuptools]
+packages = ["pianotake"]
