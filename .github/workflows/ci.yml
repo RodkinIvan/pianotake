@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: ["**"]     # not tags: a release tag is tested by the Desktop apps workflow
   pull_request:
 
 jobs:

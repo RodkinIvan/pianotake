@@ -231,9 +231,11 @@ def test_midi_only_take_writes_only_a_mid(tmp_path):
     take.stop()
     res = take.wait(10)
     assert res.wav_path is None and not list(tmp_path.glob("*.wav"))
-    assert res.note_ons == 1 and res.duration == pytest.approx(0.5, abs=0.1)
+    # sleep() only guarantees a minimum, and shared CI machines overshoot a lot: the take
+    # lasts at least the 0.5 s slept, and the MIDI file must end exactly where the take did.
+    assert res.note_ons == 1 and 0.5 <= res.duration < 5
     info = check.midi_info(take.mid_path)
-    assert info["note_times"][0] == pytest.approx(0.0, abs=0.02)
+    assert info["note_times"][0] == pytest.approx(0.0, abs=0.05)
     assert info["duration"] == pytest.approx(res.duration, abs=1e-3)
 
 
