@@ -51,11 +51,11 @@ rm -rf "$WORK" "$APP" "$DMG"
 mkdir -p "$WORK" "$DIST"
 
 echo "==> Icon"
-"$PY" "$HERE/make_icon.py" "$WORK/icon" >/dev/null
+"$PY" "$HERE/../make_icon.py" "$WORK/icon" >/dev/null
 
 echo "==> PyInstaller"
-PIANOTAKE_ICON="$WORK/icon/pianotake.icns" "$PY" -m PyInstaller --noconfirm --clean \
-  --distpath "$DIST" --workpath "$WORK/pyinstaller" "$HERE/pianotake.spec"
+PIANOTAKE_ICON_DIR="$WORK/icon" "$PY" -m PyInstaller --noconfirm --clean \
+  --distpath "$DIST" --workpath "$WORK/pyinstaller" "$HERE/../pianotake.spec"
 rm -rf "$DIST/pianotake"            # the intermediate onedir folder; the .app is the product
 
 echo "==> Signing the app (inside out)"

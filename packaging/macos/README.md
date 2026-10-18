@@ -1,6 +1,6 @@
 # Building the macOS app
 
-`build.sh` turns pianotake into `dist/pianotake.app` and
+`build.sh` (with the shared `../pianotake.spec`) turns pianotake into `dist/pianotake.app` and
 `dist/pianotake-<version>-macos-<arch>.dmg`. Users then need no Python.
 
 ```bash

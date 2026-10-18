@@ -9,6 +9,9 @@ press Space again. You get:
 - `take_20261018_201500.wav`: the instrument's own sound (24-bit WAV)
 - `take_20261018_201500.mid`: every note, the sustain pedal and other controllers
 
+No audio cable or USB audio? Choose *(none, MIDI only)* as the audio input to record just
+the MIDI.
+
 Both files start at the same instant and have the same length. Drop them into a
 MIDI visualizer, a piano-roll video tool or a DAW, and the notes sit exactly on the sound.
 No DAW, no routing, no setup.
@@ -31,18 +34,25 @@ No DAW, no routing, no setup.
 
 ## Install
 
-**Mac app** (Apple Silicon): download the DMG from
-[Releases](https://github.com/RodkinIvan/pianotake/releases), open it, and drag pianotake to
-Applications. No Python needed.
+Download the app for your system from
+[Releases](https://github.com/RodkinIvan/pianotake/releases). It needs no Python.
 
-The app isn't notarized by Apple yet, so the first launch takes one extra step. Open it
-once; macOS says it can't verify pianotake. Then go to **System Settings → Privacy &
-Security**, scroll down, and click **Open Anyway** next to pianotake. After that it opens
-normally. Prefer the terminal? `xattr -dr com.apple.quarantine /Applications/pianotake.app`
-does the same.
+| System | File | First launch |
+|---|---|---|
+| macOS, Apple Silicon | `…-macos-arm64.dmg` | Open the DMG and drag pianotake to Applications. |
+| macOS, Intel | `…-macos-x86_64.dmg` | Same. |
+| Windows 10/11 | `…-windows-x64.zip` | Unzip, then run `pianotake.exe` from the folder. |
+| Linux (x86-64) | `…-linux-x86_64.tar.gz` | Unpack, install PortAudio (`sudo apt install libportaudio2`), run `./pianotake`. |
+
+The apps aren't signed yet, so the first launch takes one extra step:
+
+- **macOS** says it can't verify pianotake. Go to **System Settings → Privacy & Security**,
+  scroll down, and click **Open Anyway** next to pianotake. After that it opens normally.
+  (In a terminal, `xattr -dr com.apple.quarantine /Applications/pianotake.app` does the same.)
+- **Windows** may show *Windows protected your PC*: click **More info → Run anyway**.
 
 When pianotake first opens your instrument, macOS asks whether it may use audio input:
-click **Allow**. To build the app yourself, see [packaging/macos](packaging/macos/README.md).
+click **Allow**. To build the apps yourself, see [packaging](packaging/README.md).
 
 **With Python** (any OS), Python 3.9 or newer:
 
@@ -80,6 +90,8 @@ pianotake
 ```
 
 - **Space** or the red button starts and stops a take.
+- Pick *(none, MIDI only)* under *Audio in* to record only MIDI, or *(none, audio only)*
+  under *MIDI in* to record only sound.
 - **Test audio** plays a short, soft chord on your instrument through MIDI and measures
   what comes back. It is the quickest way to prove the whole chain works.
 - Takes go to `~/Music/PianoTakes` unless you choose another folder. The name defaults to
@@ -93,6 +105,7 @@ Options:
 pianotake --list                 show audio inputs and MIDI ports, and what would be picked
 pianotake --audio scarlett       use the audio input whose name contains "scarlett"
 pianotake --midi none            record audio only
+pianotake --audio none           record MIDI only
 pianotake --channels 1           record a mono input
 pianotake --out ~/Recordings     save takes somewhere else
 pianotake --cli                  record in the terminal (Enter starts and stops)
@@ -167,8 +180,9 @@ If it sounds right there, the difference comes from your computer's playback cha
 
 - Roland FP-30X on macOS (Apple Silicon): audio and MIDI over a single USB cable.
 
-Windows and Linux are covered by the automated tests but not yet by a real instrument.
-Reports with other instruments are very welcome.
+The Intel Mac, Windows and Linux apps are built and smoke-tested automatically, but
+nobody has tried them with a real instrument yet. Reports with other instruments and
+systems are very welcome.
 
 ## Development
 

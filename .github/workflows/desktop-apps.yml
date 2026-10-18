@@ -1,19 +1,27 @@
-name: macOS app
+name: Desktop apps
 
-# Builds pianotake.app + DMG. Run it by hand (Actions > macOS app > Run workflow) or push a
-# tag like v0.1.0 to also publish a GitHub Release with the DMG attached.
+# Builds the pianotake app for macOS (Apple Silicon and Intel), Windows and Linux, runs a
+# smoke test of each build, and uploads them as workflow artifacts.
+#   * Push a tag like v0.2.0 to also publish a GitHub Release with all builds attached.
+#   * Or run it by hand (Actions > Desktop apps > Run workflow); fill in "release_tag" to
+#     attach the builds to an existing release.
 #
-# Signing and notarization switch on when these repository secrets exist:
+# macOS signing and notarization switch on when these repository secrets exist:
 #   MACOS_CERT_P12           base64 of your "Developer ID Application" certificate (.p12)
 #   MACOS_CERT_PASSWORD      password of that .p12
 #   MACOS_SIGN_ID            e.g. "Developer ID Application: Your Name (TEAMID)"
 #   NOTARY_KEY_P8            contents of an App Store Connect API key (.p8)
 #   NOTARY_KEY_ID            that key's ID
 #   NOTARY_ISSUER            the issuer ID shown with the key
-# Without them the DMG is ad-hoc signed (macOS warns "unidentified developer").
+# Without them the macOS app is ad-hoc signed. Windows and Linux builds are unsigned.
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the builds to this existing release (e.g. v0.1.0); leave empty to only build"
+        required: false
+        default: ""
   push:
     tags: ["v*"]
 
@@ -22,7 +30,15 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14            # Apple Silicon
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64, os: macos-14 }
+          - { name: macos-x86_64, os: macos-15-intel }
+          - { name: windows-x64, os: windows-latest }
+          - { name: linux-x86_64, os: ubuntu-22.04 }   # older glibc = runs on more distros
+    runs-on: ${{ matrix.os }}
     env:
       MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
       MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -35,10 +51,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 libasound2-dev
+
       - run: pip install pyinstaller .
 
       - name: Import signing certificate
-        if: env.MACOS_CERT_P12 != ''
+        if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
         run: |
           KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
           KEYCHAIN_PW="$(uuidgen)"
@@ -53,21 +74,57 @@ jobs:
           echo "PIANOTAKE_SIGN_ID=$MACOS_SIGN_ID" >> "$GITHUB_ENV"
 
       - name: Notary API key
-        if: env.NOTARY_KEY_P8 != ''
+        if: runner.os == 'macOS' && env.NOTARY_KEY_P8 != ''
         run: |
           printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
           echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
 
-      - name: Build
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
         run: PYTHON=python packaging/macos/build.sh
+
+      - name: Build (Windows, Linux)
+        if: runner.os != 'macOS'
+        run: python packaging/build.py
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS)   BIN=dist/pianotake.app/Contents/MacOS/pianotake ;;
+            Windows) BIN=dist/pianotake/pianotake.exe ;;
+            Linux)   BIN=dist/pianotake/pianotake ;;
+          esac
+          "$BIN" --self-test
+          "$BIN" --version
+          file "$BIN" 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pianotake-macos
-          path: dist/*.dmg
+          name: pianotake-${{ matrix.name }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
 
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.dmg --title "pianotake $GITHUB_REF_NAME" --generate-notes
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          ls -la assets
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" assets/* --title "pianotake $TAG" --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi
