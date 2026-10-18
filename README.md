@@ -31,7 +31,12 @@ No DAW, no routing, no setup.
 
 ## Install
 
-Python 3.9 or newer:
+**Mac app:** download the DMG from [Releases](https://github.com/RodkinIvan/pianotake/releases),
+open it, and drag pianotake to Applications. No Python needed. On first use, macOS asks
+whether pianotake may use audio input; click Allow. To build the app yourself, see
+[packaging/macos](packaging/macos/README.md).
+
+**With Python** (any OS), Python 3.9 or newer:
 
 ```bash
 pipx install git+https://github.com/RodkinIvan/pianotake

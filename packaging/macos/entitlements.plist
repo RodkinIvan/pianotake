@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened runtime: allow audio input (the instrument's USB audio counts as a microphone). -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- sounddevice/soundfile use cffi callbacks, which need writable+executable memory. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>

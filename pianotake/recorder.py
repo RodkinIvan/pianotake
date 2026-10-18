@@ -245,12 +245,40 @@ def probe_input(dev_index, channels, samplerate, seconds=1.0, midi_out_name=None
     return {"frames": len(x), "peak": float(np.abs(x).max()) if len(x) else 0.0,
             "rms": float(np.sqrt(np.mean(x.astype(np.float64) ** 2))) if len(x) else 0.0,
             "all_zero": bool(len(x)) and not np.any(x), "played": out is not None,
-            "flags": flags[0], "seconds": seconds}
+            "flags": flags[0], "seconds": seconds, "mic": mic_authorization()}
+
+
+def mic_authorization():
+    """macOS microphone permission as the system sees it for this process (for a script,
+    that's the terminal app that launched it): 'authorized', 'denied', 'restricted',
+    'not_determined', or None if unknown or not macOS. Asks AVFoundation via ctypes."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        import ctypes.util
+        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        ctypes.cdll.LoadLibrary("/System/Library/Frameworks/AVFoundation.framework/AVFoundation")
+        objc.objc_getClass.restype = objc.sel_registerName.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        send = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+        # objc_msgSend must be called with the exact prototype of each method (arm64 ABI)
+        new_str = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p)(send)
+        status_of = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(send)
+        audio = new_str(objc.objc_getClass(b"NSString"), objc.sel_registerName(b"stringWithUTF8String:"),
+                        b"soun")  # AVMediaTypeAudio
+        status = status_of(objc.objc_getClass(b"AVCaptureDevice"),
+                           objc.sel_registerName(b"authorizationStatusForMediaType:"), audio)
+        return {0: "not_determined", 1: "restricted", 2: "denied", 3: "authorized"}.get(status)
+    except Exception:  # noqa: BLE001 - purely diagnostic
+        return None
 
 
 def host_app():
     """Best guess of the macOS app whose Microphone permission applies to this process."""
     bid = os.environ.get("__CFBundleIdentifier", "")
+    if getattr(sys, "frozen", False):          # running as pianotake.app
+        return "pianotake", bid
     known = {"com.apple.Terminal": "Terminal", "com.googlecode.iterm2": "iTerm",
              "com.microsoft.VSCode": "Visual Studio Code", "dev.warp.Warp-Stable": "Warp",
              "com.mitchellh.ghostty": "Ghostty", "net.kovidgoyal.kitty": "kitty",
@@ -280,15 +308,21 @@ def running_routing_apps():
     return found
 
 
-def permission_help():
-    """Step 1 of the silence checklist, for the current OS."""
+def permission_help(mic=None):
+    """Step 1 of the silence checklist, for the current OS. `mic` is mic_authorization()."""
     if sys.platform == "darwin":
         app, bid = host_app()
+        if mic == "authorized":
+            return (f"1. Microphone permission is granted to {app}, so that isn't the cause.\n")
+        if mic == "not_determined":
+            return (f"1. Microphone permission for {app} hasn't been decided yet. If macOS is asking\n"
+                    "   now, click Allow, then press Test audio. No prompt? Quit and reopen the app.\n")
+        state = {"denied": " (currently DENIED)", "restricted": " (blocked by a device policy)"}.get(mic, "")
         reset = (f"\n   Not listed? Run:  tccutil reset Microphone {bid}  then relaunch {app} to get "
                  "the prompt." if bid else "")
-        return ("1. Microphone permission. macOS hands out silence (no error) when the app that runs\n"
-                "   Python may not use audio input. Fix: System Settings > Privacy & Security >\n"
-                f"   Microphone > turn on \"{app}\", then quit and reopen {app} and run this again.{reset}\n")
+        return (f"1. Microphone permission{state}. macOS hands out silence (no error) when an app may\n"
+                "   not use audio input. Fix: System Settings > Privacy & Security > Microphone >\n"
+                f"   turn on \"{app}\", then quit and reopen {app} and run this again.{reset}\n")
     if sys.platform.startswith("win"):
         return ("1. Microphone privacy. Windows can block audio input for desktop apps. Fix: Settings >\n"
                 "   Privacy & security > Microphone > turn on \"Microphone access\" and \"Let desktop\n"
@@ -297,14 +331,16 @@ def permission_help():
             "   pavucontrol) and that your user may use audio devices (e.g. the 'audio' group).\n")
 
 
-def silence_help(where="the input"):
+def silence_help(where="the input", mic="check"):
+    if mic == "check":
+        mic = mic_authorization()
     running = running_routing_apps()
     now = f" ({', '.join(running)} is running right now)" if running else ""
     return (
         f"NO AUDIO: {where} delivered digital silence (every sample is exactly 0).\n"
         "A live USB audio stream normally carries at least a tiny noise floor, so exact\n"
         "zeros mean something is blocking the input. Likely causes, most likely first:\n"
-        + permission_help() +
+        + permission_help(mic) +
         f"2. An audio routing app{now} (Background Music, SoundSource, Loopback, ...)\n"
         "   intercepting the device. Quit it and test again.\n"
         "3. The instrument isn't sending its sound over USB. Check that Local Control is On\n"
@@ -319,11 +355,12 @@ def silence_help(where="the input"):
 def diagnose(res, name):
     """Turn a probe result into (level, message). level: ok | warn | err."""
     head = f"Pre-flight on {name}: "
+    mic = res.get("mic")
     if res["frames"] == 0:
-        return "err", head + "the stream opened but delivered no audio buffers.\n" + silence_help()
+        return "err", head + "the stream opened but delivered no audio buffers.\n" + silence_help(mic=mic)
     stats = f"peak {fmt_db(res['peak'])}, RMS {fmt_db(res['rms'])} over {res['seconds']:.1f} s"
     if res["all_zero"]:
-        return "err", head + stats + "\n" + silence_help()
+        return "err", head + stats + "\n" + silence_help(mic=mic)
     if res["peak"] < 10 ** (-80 / 20):
         if res["played"]:
             return "warn", (head + stats + "\nThe input is live (noise floor only) but the test chord "

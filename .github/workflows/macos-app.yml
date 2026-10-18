@@ -1,0 +1,73 @@
+name: macOS app
+
+# Builds pianotake.app + DMG. Run it by hand (Actions > macOS app > Run workflow) or push a
+# tag like v0.1.0 to also publish a GitHub Release with the DMG attached.
+#
+# Signing and notarization switch on when these repository secrets exist:
+#   MACOS_CERT_P12           base64 of your "Developer ID Application" certificate (.p12)
+#   MACOS_CERT_PASSWORD      password of that .p12
+#   MACOS_SIGN_ID            e.g. "Developer ID Application: Your Name (TEAMID)"
+#   NOTARY_KEY_P8            contents of an App Store Connect API key (.p8)
+#   NOTARY_KEY_ID            that key's ID
+#   NOTARY_ISSUER            the issuer ID shown with the key
+# Without them the DMG is ad-hoc signed (macOS warns "unidentified developer").
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14            # Apple Silicon
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      MACOS_SIGN_ID: ${{ secrets.MACOS_SIGN_ID }}
+      NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+      NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+      NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller .
+
+      - name: Import signing certificate
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "PIANOTAKE_SIGN_ID=$MACOS_SIGN_ID" >> "$GITHUB_ENV"
+
+      - name: Notary API key
+        if: env.NOTARY_KEY_P8 != ''
+        run: |
+          printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: PYTHON=python packaging/macos/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pianotake-macos
+          path: dist/*.dmg
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.dmg --title "pianotake $GITHUB_REF_NAME" --generate-notes
