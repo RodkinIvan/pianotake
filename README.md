@@ -31,18 +31,19 @@ No DAW, no routing, no setup.
 
 ## Install
 
-Python 3.9 or newer. Clone this repository, then:
+Python 3.9 or newer:
 
 ```bash
-pip install .
+pipx install git+https://github.com/RodkinIvan/pianotake
 ```
 
-That installs two commands, `pianotake` and `pianotake-check`. `python -m pianotake`
-works too. Using pipx keeps the tool in its own environment: `pipx install .`
+or, from a clone, `pip install .`. That installs two commands, `pianotake` and
+`pianotake-check`; `python -m pianotake` works too.
 
 The window uses Tkinter, which ships with the python.org and conda builds. With Homebrew
 Python run `brew install python-tk`; on Debian/Ubuntu, `sudo apt install python3-tk`.
-On Linux, sounddevice also needs PortAudio: `sudo apt install libportaudio2`.
+On Linux, also install PortAudio and the ALSA headers (python-rtmidi may compile itself):
+`sudo apt install libportaudio2 libasound2-dev`.
 
 ## Allow audio input (important)
 

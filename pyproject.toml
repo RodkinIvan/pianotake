@@ -34,6 +34,10 @@ classifiers = [
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
+[project.urls]
+Homepage = "https://github.com/RodkinIvan/pianotake"
+Issues = "https://github.com/RodkinIvan/pianotake/issues"
+
 [project.scripts]
 pianotake = "pianotake.cli:main"
 pianotake-check = "pianotake.check:main"
