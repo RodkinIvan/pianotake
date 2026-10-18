@@ -9,12 +9,16 @@ press Space again. You get:
 - `take_20261018_201500.wav`: the instrument's own sound (24-bit WAV)
 - `take_20261018_201500.mid`: every note, the sustain pedal and other controllers
 
-No audio cable or USB audio? Choose *(none, MIDI only)* as the audio input to record just
-the MIDI.
-
 Both files start at the same instant and have the same length. Drop them into a
 MIDI visualizer, a piano-roll video tool or a DAW, and the notes sit exactly on the sound.
 No DAW, no routing, no setup.
+
+No audio cable or USB audio? Choose *(none, MIDI only)* as the audio input to record just
+the MIDI.
+
+<p align="center">
+  <img src="docs/screenshot.webp" width="560" alt="The pianotake window after a take: record button, level meter, MIDI note count, device pickers and the saved WAV and MIDI files">
+</p>
 
 ## Features
 
